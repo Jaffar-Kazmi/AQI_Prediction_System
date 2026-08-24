@@ -1,3 +1,7 @@
+from datetime import datetime
+
+import pandas as pd
+
 """
 feature_engineering.py
 Turns raw fetch_data.py rows into model-ready features:
@@ -6,7 +10,33 @@ Turns raw fetch_data.py rows into model-ready features:
 - basic cleanup (rain None -> 0, drop unreliable dew_point)
 """
 
-from datetime import datetime, timezone
+# Canonical column names used everywhere downstream (feature store, training,
+# dashboard) - both the live fetch_data.py rows and the Open-Meteo backfill
+# dataframe get renamed into this schema so nothing downstream needs to know
+# which source a row originally came from.
+BACKFILL_COLUMN_MAP = {
+    "time": "timestamp_utc",
+    "us_aqi": "aqi",
+    "pm2_5": "pm25",
+    "pm10": "pm10",
+    "carbon_monoxide": "co",
+    "nitrogen_dioxide": "no2",
+    "sulphur_dioxide": "so2",
+    "ozone": "o3",
+    "temperature_2m": "temperature_c",
+    "relative_humidity_2m": "humidity_pct",
+    "surface_pressure": "pressure_hpa",
+    "wind_speed_10m": "wind_speed",
+    "precipitation": "rain",
+}
+
+
+def standardize_backfill_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename Open-Meteo's backfill columns to match the live pipeline's
+    schema (fetch_data.py / feature_engineering.py row format)."""
+    df = df.rename(columns=BACKFILL_COLUMN_MAP)
+    df["station_id"] = "open-meteo-backfill"
+    return df
 
 
 def add_time_features(row: dict) -> dict:
@@ -64,6 +94,43 @@ def add_change_rate(current_row: dict, previous_row: dict | None) -> dict:
         current_row["hours_since_previous"] = None
 
     return current_row
+
+
+def build_features_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Vectorized version of build_features() for an entire backfill
+    dataframe, rather than looping build_features() 35,000 times.
+    Assumes df is already in canonical schema (run standardize_backfill_columns
+    first if it came from Open-Meteo) and sorted by timestamp_utc."""
+    df = df.copy()
+    df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"])
+    df = df.sort_values("timestamp_utc").reset_index(drop=True)
+
+    # rain: None/NaN -> 0, same rule as the single-row version
+    if "rain" in df.columns:
+        df["rain"] = df["rain"].fillna(0.0)
+    df = df.drop(columns=["dew_point"], errors="ignore")
+
+    # time features
+    df["hour"] = df["timestamp_utc"].dt.hour
+    df["day"] = df["timestamp_utc"].dt.day
+    df["month"] = df["timestamp_utc"].dt.month
+    df["day_of_week"] = df["timestamp_utc"].dt.weekday
+    df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
+
+    # aqi change rate: same formula as add_change_rate, vectorized via diff().
+    # First row has no prior reading -> NaN, matching the single-row version's
+    # None for the first-ever reading.
+    hours_elapsed = df["timestamp_utc"].diff().dt.total_seconds() / 3600
+    aqi_delta = df["aqi"].diff()
+    df["hours_since_previous"] = hours_elapsed.round(4)
+    df["aqi_change_rate"] = (aqi_delta / hours_elapsed).round(4)
+    # Any non-positive gap (shouldn't happen in sorted backfill data, but
+    # matches the single-row guard) is treated as missing rather than
+    # producing a divide-by-zero or negative-time artifact.
+    invalid_gap = hours_elapsed <= 0
+    df.loc[invalid_gap, ["aqi_change_rate", "hours_since_previous"]] = None
+
+    return df
 
 
 def build_features(current_row: dict, previous_row: dict | None = None) -> dict:
