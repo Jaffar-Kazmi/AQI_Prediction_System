@@ -6,8 +6,9 @@ AQICN station and returns a clean, flat dict ready for feature engineering.
 
 import os
 import time
-import requests
 from datetime import datetime, timezone
+
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()  # reads .env in the current working directory into os.environ

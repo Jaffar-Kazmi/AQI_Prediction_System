@@ -1,7 +1,3 @@
-from datetime import datetime
-
-import pandas as pd
-
 """
 feature_engineering.py
 Turns raw fetch_data.py rows into model-ready features:
@@ -9,6 +5,10 @@ Turns raw fetch_data.py rows into model-ready features:
 - AQI change rate (requires at least one prior reading)
 - basic cleanup (rain None -> 0, drop unreliable dew_point)
 """
+
+from datetime import datetime
+
+import pandas as pd
 
 # Canonical column names used everywhere downstream (feature store, training,
 # dashboard) - both the live fetch_data.py rows and the Open-Meteo backfill
