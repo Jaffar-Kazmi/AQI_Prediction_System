@@ -10,15 +10,17 @@ most recent chunk), never a random shuffle, or the model gets to peek
 at "future" patterns during training that it wouldn't have in production.
 """
 
+import os
+
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import Ridge
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from sklearn.preprocessing import StandardScaler
-from xgboost import XGBRegressor
 import torch
-import torch.nn as nn
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.preprocessing import StandardScaler
+from torch import nn
+from xgboost import XGBRegressor
 
 import feature_store as fs
 
@@ -177,6 +179,25 @@ def evaluate(y_true, y_pred, label: str) -> dict:
     return {"model": label, "rmse": rmse, "mae": mae, "r2": r2}
 
 
+import joblib
+
+MODEL_OUTPUT_PATH = "model_registry/xgboost_aqi_model.joblib"
+SCALER_OUTPUT_PATH = "model_registry/feature_columns.joblib"
+
+
+def save_model(model, feature_cols: list, path: str = MODEL_OUTPUT_PATH):
+    """Save the trained model plus the exact feature column order it
+    expects. Saving feature_cols alongside the model matters: if
+    fetch_data.py's schema ever changes, whatever loads this model later
+    (the dashboard, a CI/CD retrain job) needs to know the exact column
+    order the model was trained on, not just the model weights."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    joblib.dump(model, path)
+    joblib.dump(feature_cols, SCALER_OUTPUT_PATH)
+    print(f"Saved model to {path}")
+    print(f"Saved feature column list to {SCALER_OUTPUT_PATH}")
+
+
 def main():
     print("Loading features from the store...")
     df = fs.read()
@@ -251,6 +272,11 @@ def main():
     xgb.fit(X_train, y_train)
     xgb_preds = xgb.predict(X_test)
     results.append(evaluate(y_test, xgb_preds, "XGBoost"))
+
+    # Save the winning model now, right after training - if a later step
+    # in this script errors out, the model you actually want is already
+    # safely on disk rather than lost with the Python session.
+    save_model(xgb, feature_cols)
 
     print("\nTraining PyTorch MLP...")
     mlp_preds = train_pytorch_model(X_train, y_train, X_test, y_test)
