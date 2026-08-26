@@ -19,6 +19,17 @@ STORE_PATH = "feature_store/aqi_features.parquet"
 PRIMARY_KEY = "timestamp_utc"
 
 
+def _normalize_timestamps(series: pd.Series) -> pd.Series:
+    """Backfilled rows (from Open-Meteo) have timezone-naive timestamps.
+    Live fetch rows (from fetch_data.py's datetime.now(timezone.utc))
+    are timezone-aware. Mixing the two in one column makes pandas raise
+    on sort/compare, so every timestamp is normalized to UTC and then
+    made naive here, once, on the way into or out of the store - nothing
+    else downstream needs to know this distinction ever existed."""
+    ts = pd.to_datetime(series, utc=True)
+    return ts.dt.tz_localize(None)
+
+
 def _ensure_store_dir():
     os.makedirs(os.path.dirname(STORE_PATH), exist_ok=True)
 
@@ -34,11 +45,11 @@ def insert(df: pd.DataFrame, upsert: bool = True) -> int:
     """
     _ensure_store_dir()
     df = df.copy()
-    df[PRIMARY_KEY] = pd.to_datetime(df[PRIMARY_KEY])
+    df[PRIMARY_KEY] = _normalize_timestamps(df[PRIMARY_KEY])
 
     if upsert and os.path.exists(STORE_PATH):
         existing = pd.read_parquet(STORE_PATH)
-        existing[PRIMARY_KEY] = pd.to_datetime(existing[PRIMARY_KEY])
+        existing[PRIMARY_KEY] = _normalize_timestamps(existing[PRIMARY_KEY])
         combined = pd.concat([existing, df], ignore_index=True)
         combined = combined.drop_duplicates(subset=PRIMARY_KEY, keep="last")
     else:
@@ -57,7 +68,7 @@ def read(start: str | None = None, end: str | None = None) -> pd.DataFrame:
         )
 
     df = pd.read_parquet(STORE_PATH)
-    df[PRIMARY_KEY] = pd.to_datetime(df[PRIMARY_KEY])
+    df[PRIMARY_KEY] = _normalize_timestamps(df[PRIMARY_KEY])
 
     if start:
         df = df[df[PRIMARY_KEY] >= pd.Timestamp(start)]
