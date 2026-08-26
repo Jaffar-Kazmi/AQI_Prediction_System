@@ -1,0 +1,41 @@
+name: Hourly AQI Fetch
+
+on:
+  schedule:
+    - cron: "5 * * * *"   # 5 minutes past every hour (UTC)
+  workflow_dispatch: {}     # lets you trigger it manually from the Actions tab
+
+permissions:
+  contents: write            # needed to commit the updated feature store back
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-fetch.txt
+
+      - name: Run hourly pipeline
+        env:
+          AQICN_TOKEN: ${{ secrets.AQICN_TOKEN }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+        run: python src/hourly_pipeline.py
+
+      - name: Commit updated feature store
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add feature_store/aqi_features.parquet
+          # Only commit if the file actually changed - avoids empty commits
+          # if a run fails to insert anything (e.g. every station was stale).
+          git diff --cached --quiet || git commit -m "Hourly AQI update ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+          git pull --rebase
+          git push

@@ -1,0 +1,41 @@
+name: Daily Model Retrain
+
+on:
+  schedule:
+    - cron: "30 2 * * *"   # 02:30 UTC daily (07:30 PKT) - after a full day of hourly fetches
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-train.txt
+          # CPU-only torch build - the default PyPI torch package pulls in
+          # ~2GB of CUDA libraries that are useless on GitHub's runners
+          # (no GPU) and needlessly slow down every single daily run.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Run training pipeline
+        run: python src/train.py
+
+      - name: Commit updated model + results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add model_registry/ model_results.csv
+          git diff --cached --quiet || git commit -m "Daily model retrain ($(date -u +'%Y-%m-%d'))"
+          git pull --rebase
+          git push
