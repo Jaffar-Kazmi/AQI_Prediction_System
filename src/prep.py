@@ -10,6 +10,7 @@ End-to-end prep of the Open-Meteo backfill data:
 """
 
 import pandas as pd
+from schema import validate_dataframe_schema
 
 from backfill_data import fill_missing_aqi
 from feature_engineering import build_features_df, standardize_backfill_columns
@@ -53,6 +54,7 @@ def main():
 
     df_std = standardize_backfill_columns(df)
     df_features = build_features_df(df_std)
+    df_features = validate_dataframe_schema(df_features)
 
     print(f"\nFinal columns: {list(df_features.columns)}")
     print(f"Final row count: {len(df_features)}")

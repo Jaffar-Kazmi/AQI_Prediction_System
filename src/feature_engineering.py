@@ -10,6 +10,8 @@ from datetime import datetime
 
 import pandas as pd
 
+from schema import enforce_schema
+
 # Canonical column names used everywhere downstream (feature store, training,
 # dashboard) - both the live fetch_data.py rows and the Open-Meteo backfill
 # dataframe get renamed into this schema so nothing downstream needs to know
@@ -55,24 +57,9 @@ def add_time_features(row: dict) -> dict:
 
 
 def clean_fields(row: dict) -> dict:
-    """rain=None means 'no rain reported', not missing data -> treat as 0.
-    dew_point is dropped: neither AQICN nor OpenWeather's free tier
-    provides it reliably, so it'd be mostly-null noise as a feature.
-    dominant_pollutant and station_time_local are dropped too: they're
-    text metadata (not features), and don't exist in the historical
-    backfill data. ow_* fields are OpenWeather's raw supplementary data -
-    already merged into temperature_c/humidity_pct/etc. via the fallback
-    logic in fetch_current_reading(), so they're redundant as separate
-    features, and don't exist in backfill data either (schema drift)."""
+    """rain=None means 'no rain reported', not missing data -> treat as 0."""
     row["rain"] = row.get("rain") or 0.0
-    row.pop("dew_point", None)
-    row.pop("dominant_pollutant", None)
-    row.pop("station_time_local", None)
-    for key in list(row.keys()):
-        if key.startswith("ow_"):
-            row.pop(key)
     return row
-
 
 def add_change_rate(current_row: dict, previous_row: dict | None) -> dict:
     """AQI change rate = (current - previous) / hours_elapsed.
@@ -145,17 +132,11 @@ def build_features_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_features(current_row: dict, previous_row: dict | None = None) -> dict:
-    """Main entry point: apply all feature engineering steps to a single row.
-
-    current_row: the latest row from fetch_data.fetch_current_reading()
-    previous_row: the most recent PRIOR row from the feature store, if any.
-                   Pass None for the very first row ever collected.
-    """
-    row = dict(current_row)  # don't mutate the caller's dict
+    row = dict(current_row)
     row = clean_fields(row)
     row = add_time_features(row)
     row = add_change_rate(row, previous_row)
-    return row
+    return enforce_schema(row)
 
 
 if __name__ == "__main__":
