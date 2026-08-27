@@ -57,9 +57,20 @@ def add_time_features(row: dict) -> dict:
 def clean_fields(row: dict) -> dict:
     """rain=None means 'no rain reported', not missing data -> treat as 0.
     dew_point is dropped: neither AQICN nor OpenWeather's free tier
-    provides it reliably, so it'd be mostly-null noise as a feature."""
+    provides it reliably, so it'd be mostly-null noise as a feature.
+    dominant_pollutant and station_time_local are dropped too: they're
+    text metadata (not features), and don't exist in the historical
+    backfill data. ow_* fields are OpenWeather's raw supplementary data -
+    already merged into temperature_c/humidity_pct/etc. via the fallback
+    logic in fetch_current_reading(), so they're redundant as separate
+    features, and don't exist in backfill data either (schema drift)."""
     row["rain"] = row.get("rain") or 0.0
     row.pop("dew_point", None)
+    row.pop("dominant_pollutant", None)
+    row.pop("station_time_local", None)
+    for key in list(row.keys()):
+        if key.startswith("ow_"):
+            row.pop(key)
     return row
 
 
