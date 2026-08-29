@@ -38,18 +38,30 @@ import streamlit as st
 API_BASE = "http://localhost:8000"
 
 CATEGORY_COLORS = {
-    "Good": "#2F6F4E",
-    "Moderate": "#C98A2E",
-    "Unhealthy for Sensitive Groups": "#B24C3A",
-    "Unhealthy": "#8C2F3E",
-    "Very Unhealthy": "#6B3F63",
-    "Hazardous": "#472A42",
+    "Good": "#6A9C81",
+    "Moderate": "#D3A65E",
+    "Unhealthy for Sensitive Groups": "#C98871",
+    "Unhealthy": "#BC7079",
+    "Very Unhealthy": "#9B7CA3",
+    "Hazardous": "#8A7288",
 }
-INK = "#1B211E"
-INK_SOFT = "#5C635C"
-PAPER = "#F3F4EE"
-MIST = "#E7E9E2"
-LINE = "#C9CCC0"
+# Slightly deeper versions of the same hues, used only where a bit more
+# contrast is needed for legibility (small pill labels) - never for large
+# fills like the gauge bar or big numbers, which is where the original
+# palette felt too intense.
+CATEGORY_COLORS_DEEP = {
+    "Good": "#4C7E64",
+    "Moderate": "#B4863E",
+    "Unhealthy for Sensitive Groups": "#A6634C",
+    "Unhealthy": "#9C4F58",
+    "Very Unhealthy": "#775682",
+    "Hazardous": "#6B5468",
+}
+INK = "#2A312D"
+INK_SOFT = "#6A716B"
+PAPER = "#FAFAF6"
+MIST = "#EFF1EA"
+LINE = "#D8DACF"
 
 st.set_page_config(
     page_title="Islamabad AQI Forecast",
@@ -81,7 +93,7 @@ st.markdown(f"""
     }}
     .cat-pill {{
         display:inline-block; padding:3px 11px; border-radius:999px;
-        font-size:0.78rem; font-weight:600; color:white;
+        font-size:0.78rem; font-weight:600;
     }}
     .caveat-box {{
         background:{MIST}; border-left:3px solid {INK_SOFT};
@@ -97,9 +109,16 @@ def category_color(category: str) -> str:
     return CATEGORY_COLORS.get(category, INK_SOFT)
 
 
+def category_color_deep(category: str) -> str:
+    return CATEGORY_COLORS_DEEP.get(category, INK_SOFT)
+
+
 def category_pill(category: str) -> str:
-    return (f"<span class='cat-pill' style='background:{category_color(category)}'>"
-            f"{category}</span>")
+    """A soft tinted background with deep-colored text reads as far gentler
+    than a solid saturated fill with white text, while staying just as
+    legible and just as distinguishable between categories."""
+    return (f"<span class='cat-pill' style='background:{category_color(category)}22; "
+            f"color:{category_color_deep(category)}'>{category}</span>")
 
 
 @st.cache_data(ttl=55)
@@ -140,11 +159,11 @@ def aqi_gauge(value: float, category: str) -> go.Figure:
             "bgcolor": PAPER,
             "borderwidth": 0,
             "steps": [
-                {"range": [0, 50], "color": "#2F6F4E22"},
-                {"range": [50, 100], "color": "#C98A2E22"},
-                {"range": [100, 150], "color": "#B24C3A22"},
-                {"range": [150, 200], "color": "#8C2F3E22"},
-                {"range": [200, 300], "color": "#6B3F6322"},
+                {"range": [0, 50], "color": "#6A9C8118"},
+                {"range": [50, 100], "color": "#D3A65E18"},
+                {"range": [100, 150], "color": "#C9887118"},
+                {"range": [150, 200], "color": "#BC707918"},
+                {"range": [200, 300], "color": "#9B7CA318"},
             ],
         },
     ))
@@ -157,7 +176,7 @@ def aqi_gauge(value: float, category: str) -> go.Figure:
 
 def contribution_chart(contrib_df: pd.DataFrame, horizon_label: str) -> go.Figure:
     contrib_df = contrib_df.sort_values("shap_contribution")
-    colors = [category_color("Good") if v < 0 else category_color("Unhealthy")
+    colors = [category_color_deep("Good") if v < 0 else category_color_deep("Unhealthy")
               for v in contrib_df["shap_contribution"]]
     fig = go.Figure(go.Bar(
         x=contrib_df["shap_contribution"],
@@ -263,7 +282,7 @@ with tab_forecast:
             st.markdown(f"**{horizon_key} ahead**")
             st.markdown(
                 f"<div style='font-family:Fraunces,serif; font-size:2.4rem; font-weight:600; "
-                f"color:{category_color(f['category'])}'>{f['predicted_aqi']}</div>",
+                f"color:{category_color_deep(f['category'])}'>{f['predicted_aqi']}</div>",
                 unsafe_allow_html=True,
             )
             st.markdown(category_pill(f["category"]), unsafe_allow_html=True)
