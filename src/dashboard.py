@@ -65,7 +65,7 @@ LINE = "#D8DACF"
 
 st.set_page_config(
     page_title="Islamabad AQI Forecast",
-    page_icon="🌫️",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -77,30 +77,38 @@ st.markdown(f"""
 
     html, body, [class*="css"] {{
         font-family: 'IBM Plex Sans', sans-serif;
+        font-size: 17px;
     }}
     .block-container {{ padding-top: 1.6rem; max-width: 1200px; }}
     h1, h2, h3 {{ font-family: 'Fraunces', serif; font-weight: 600; }}
+    h1 {{ font-size: 2.6rem; }}
+    h2 {{ font-size: 1.9rem; }}
+    h3 {{ font-size: 1.5rem; }}
+    p, li, label, div {{ font-size: 1.02rem; }}
 
     .status-bar {{
         display:flex; justify-content:space-between; align-items:center;
-        padding:8px 16px; background:{MIST}; border-radius:8px;
-        font-family:'IBM Plex Mono', monospace; font-size:0.78rem;
+        padding:10px 18px; background:{MIST}; border-radius:8px;
+        font-family:'IBM Plex Mono', monospace; font-size:0.92rem;
         color:{INK_SOFT}; margin-bottom:18px; flex-wrap:wrap; gap:8px;
     }}
     .metric-card {{
         background:{PAPER}; border:1px solid {LINE}; border-radius:12px;
-        padding:18px 20px;
+        padding:20px 22px; font-size:1.05rem;
     }}
     .cat-pill {{
-        display:inline-block; padding:3px 11px; border-radius:999px;
-        font-size:0.78rem; font-weight:600;
+        display:inline-block; padding:5px 14px; border-radius:999px;
+        font-size:0.95rem; font-weight:600;
     }}
     .caveat-box {{
         background:{MIST}; border-left:3px solid {INK_SOFT};
-        padding:10px 14px; border-radius:6px; font-size:0.84rem;
+        padding:12px 16px; border-radius:6px; font-size:1rem;
         color:{INK_SOFT}; margin:10px 0 20px;
     }}
-    div[data-testid="stMetricValue"] {{ font-family:'Fraunces', serif; }}
+    div[data-testid="stMetricValue"] {{ font-family:'Fraunces', serif; font-size:1.9rem; }}
+    div[data-testid="stMetricLabel"] {{ font-size:0.95rem; }}
+    .stTabs [data-baseweb="tab"] {{ font-size:1.05rem; padding:10px 6px; }}
+    [data-testid="stCaptionContainer"] {{ font-size:0.95rem; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -215,7 +223,7 @@ with st.sidebar:
     st.caption("AQICN sensor network · OpenWeather · Open-Meteo (training history)")
 
     st.markdown("---")
-    if st.button("🔄 Refresh now"):
+    if st.button("Refresh now"):
         st.cache_data.clear()
         st.rerun()
 
@@ -241,13 +249,13 @@ st.markdown(
 )
 
 # ================= HEADER =================
-st.title("🌫️ Islamabad AQI Forecast")
+st.title("Islamabad AQI Forecast")
 
 if alerts["active_alerts"]:
     names = ", ".join(a["when"] for a in alerts["active_alerts"])
-    st.error(f"**Hazard alert** — unhealthy or worse AQI expected: {names}. See the Alerts tab for details.", icon="⚠️")
+    st.error(f"**Hazard alert** — unhealthy or worse AQI expected: {names}. See the Alerts tab for details.")
 else:
-    st.success("No hazardous AQI currently forecast in the next 3 days.", icon="✅")
+    st.success("No hazardous AQI currently forecast in the next 3 days.")
 
 # ================= CURRENT CONDITIONS =================
 col_gauge, col_detail = st.columns([1, 1.4], gap="large")
@@ -270,7 +278,7 @@ st.divider()
 
 # ================= TABS (progressive disclosure) =================
 tab_forecast, tab_trend, tab_explain, tab_alerts = st.tabs(
-    ["📅 3-Day Forecast", "📈 Trend", "🔍 Why this prediction", "🚨 Alerts"]
+    ["3-Day Forecast", "Trend", "Why this prediction", "Alerts"]
 )
 
 with tab_forecast:
