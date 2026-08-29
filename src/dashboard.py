@@ -1,12 +1,37 @@
 """
 dashboard.py
-Streamlit front end for the AQI forecast API. Run the API first, then this:
+Streamlit front end for the AQI forecast API.
 
-    uvicorn api:app --reload --port 8000
-    streamlit run dashboard.py
+Run the API first, then this:
+    uvicorn api:app --reload --port 8000 --app-dir src
+    streamlit run src/dashboard.py
+
+Design notes (why it's built this way, not just what):
+- Visibility of system status: a persistent status bar shows the station,
+  last reading time, and page-load time, so the user always knows how
+  fresh the data is rather than wondering if the page is stale
+  (Nielsen heuristic #1).
+- Recognition over recall: the current AQI and its category are always
+  visible near the top, not tucked behind a tab - the user shouldn't have
+  to remember it while browsing forecasts or explanations.
+- Consistency: one shared EPA color scale and category vocabulary is used
+  everywhere (gauge, cards, charts, alerts) - a color never means
+  something different in one part of the page than another.
+- Color is never the only signal: every color-coded element also carries
+  a text label, for colorblind users and for anyone glancing quickly.
+- Error prevention & recovery: API failures show the exact fix (the
+  command to run) plus a retry button, not a generic "something went wrong".
+- User control: the sidebar exposes real choices (auto-refresh, manual
+  refresh) instead of hardcoding behavior.
+- Progressive disclosure: forecast / trend / explanation / alerts are
+  separated into tabs so the page isn't a wall of everything at once.
 """
 
+import time
+from datetime import datetime
+
 import pandas as pd
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 
@@ -20,108 +45,303 @@ CATEGORY_COLORS = {
     "Very Unhealthy": "#6B3F63",
     "Hazardous": "#472A42",
 }
+INK = "#1B211E"
+INK_SOFT = "#5C635C"
+PAPER = "#F3F4EE"
+MIST = "#E7E9E2"
+LINE = "#C9CCC0"
 
-st.set_page_config(page_title="Islamabad AQI Forecast", page_icon="🌫️", layout="wide")
+st.set_page_config(
+    page_title="Islamabad AQI Forecast",
+    page_icon="🌫️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ---------- global styling ----------
+st.markdown(f"""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+    html, body, [class*="css"] {{
+        font-family: 'IBM Plex Sans', sans-serif;
+    }}
+    .block-container {{ padding-top: 1.6rem; max-width: 1200px; }}
+    h1, h2, h3 {{ font-family: 'Fraunces', serif; font-weight: 600; }}
+
+    .status-bar {{
+        display:flex; justify-content:space-between; align-items:center;
+        padding:8px 16px; background:{MIST}; border-radius:8px;
+        font-family:'IBM Plex Mono', monospace; font-size:0.78rem;
+        color:{INK_SOFT}; margin-bottom:18px; flex-wrap:wrap; gap:8px;
+    }}
+    .metric-card {{
+        background:{PAPER}; border:1px solid {LINE}; border-radius:12px;
+        padding:18px 20px;
+    }}
+    .cat-pill {{
+        display:inline-block; padding:3px 11px; border-radius:999px;
+        font-size:0.78rem; font-weight:600; color:white;
+    }}
+    .caveat-box {{
+        background:{MIST}; border-left:3px solid {INK_SOFT};
+        padding:10px 14px; border-radius:6px; font-size:0.84rem;
+        color:{INK_SOFT}; margin:10px 0 20px;
+    }}
+    div[data-testid="stMetricValue"] {{ font-family:'Fraunces', serif; }}
+</style>
+""", unsafe_allow_html=True)
 
 
-@st.cache_data(ttl=60)
+def category_color(category: str) -> str:
+    return CATEGORY_COLORS.get(category, INK_SOFT)
+
+
+def category_pill(category: str) -> str:
+    return (f"<span class='cat-pill' style='background:{category_color(category)}'>"
+            f"{category}</span>")
+
+
+@st.cache_data(ttl=55)
 def fetch(endpoint: str):
     resp = requests.get(f"{API_BASE}{endpoint}", timeout=10)
     resp.raise_for_status()
     return resp.json()
 
 
-def color_for(category: str) -> str:
-    return CATEGORY_COLORS.get(category, "#5C635C")
+def api_error_screen(err: Exception):
+    st.error(
+        "**Can't reach the prediction API.**\n\n"
+        "This dashboard reads live predictions from a separate service that "
+        "isn't running yet. Start it in another terminal, from the project root:\n\n"
+        "```\nuvicorn api:app --reload --port 8000 --app-dir src\n```\n\n"
+        "Then click **Retry** below."
+    )
+    with st.expander("Technical details"):
+        st.code(str(err))
+    if st.button("Retry", type="primary"):
+        st.cache_data.clear()
+        st.rerun()
+    st.stop()
 
 
-# ---------- load data ----------
+def aqi_gauge(value: float, category: str) -> go.Figure:
+    """A gauge is used here (rather than just a number) because it gives an
+    at-a-glance sense of WHERE on the full severity range a value sits,
+    matching the mental model people already have from car dashboards /
+    speedometers (recognition over recall)."""
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=value,
+        number={"font": {"family": "Fraunces, serif", "size": 46, "color": INK}},
+        gauge={
+            "axis": {"range": [0, 300], "tickwidth": 1, "tickcolor": INK_SOFT},
+            "bar": {"color": category_color(category), "thickness": 0.28},
+            "bgcolor": PAPER,
+            "borderwidth": 0,
+            "steps": [
+                {"range": [0, 50], "color": "#2F6F4E22"},
+                {"range": [50, 100], "color": "#C98A2E22"},
+                {"range": [100, 150], "color": "#B24C3A22"},
+                {"range": [150, 200], "color": "#8C2F3E22"},
+                {"range": [200, 300], "color": "#6B3F6322"},
+            ],
+        },
+    ))
+    fig.update_layout(
+        height=230, margin=dict(l=20, r=20, t=10, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", font_color=INK,
+    )
+    return fig
+
+
+def contribution_chart(contrib_df: pd.DataFrame, horizon_label: str) -> go.Figure:
+    contrib_df = contrib_df.sort_values("shap_contribution")
+    colors = [category_color("Good") if v < 0 else category_color("Unhealthy")
+              for v in contrib_df["shap_contribution"]]
+    fig = go.Figure(go.Bar(
+        x=contrib_df["shap_contribution"],
+        y=contrib_df["feature"],
+        orientation="h",
+        marker_color=colors,
+        text=[f"{v:+.1f}" for v in contrib_df["shap_contribution"]],
+        textposition="outside",
+    ))
+    fig.update_layout(
+        height=340,
+        margin=dict(l=10, r=30, t=10, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_family="IBM Plex Sans", font_color=INK,
+        xaxis=dict(title=f"Effect on {horizon_label} prediction (AQI points)",
+                    gridcolor=LINE, zeroline=True, zerolinecolor=INK_SOFT),
+        yaxis=dict(title=None),
+    )
+    return fig
+
+
+# ================= SIDEBAR (user control) =================
+with st.sidebar:
+    st.markdown("### Settings")
+    auto_refresh = st.toggle("Auto-refresh every 60s", value=False)
+    st.caption("Leave off while exploring explanations — refreshing resets your selection.")
+
+    st.markdown("---")
+    st.markdown("### About this project")
+    st.caption(
+        "Independent forecasting pipeline for Islamabad: hourly ingestion, "
+        "a daily-retrained model per horizon, and this dashboard. Not an "
+        "official air-quality authority."
+    )
+    st.markdown("**Data sources**")
+    st.caption("AQICN sensor network · OpenWeather · Open-Meteo (training history)")
+
+    st.markdown("---")
+    if st.button("🔄 Refresh now"):
+        st.cache_data.clear()
+        st.rerun()
+
+
+# ================= LOAD DATA =================
 try:
     predictions = fetch("/predict")
     alerts = fetch("/alerts")
 except requests.exceptions.RequestException as e:
-    st.error(
-        "Can't reach the prediction API. Make sure it's running: "
-        "`uvicorn api:app --reload --port 8000`\n\n"
-        f"Details: {e}"
-    )
-    st.stop()
+    api_error_screen(e)
 
 current = predictions["current"]
 forecast = predictions["forecast"]
 
-# ---------- alert banner ----------
-if alerts["active_alerts"]:
-    for a in alerts["active_alerts"]:
-        st.error(
-            f"**Hazard alert — {a['when']}**: AQI {a['aqi']} ({a['category']}). {a['advice']}"
-        )
-else:
-    st.success("No hazardous AQI levels currently forecast in the next 3 days.")
+# ================= STATUS BAR (visibility of system status) =================
+st.markdown(
+    f"<div class='status-bar'>"
+    f"<span>STATION: {current.get('station_id', 'unknown')}</span>"
+    f"<span>LAST READING: {current['timestamp']}</span>"
+    f"<span>PAGE LOADED: {datetime.now().strftime('%H:%M:%S')}</span>"
+    f"</div>",
+    unsafe_allow_html=True,
+)
 
-# ---------- current reading ----------
+# ================= HEADER =================
 st.title("🌫️ Islamabad AQI Forecast")
-st.caption(f"Station: {current.get('station_id', 'unknown')} · as of {current['timestamp']}")
 
-col1, col2 = st.columns([1, 2])
-with col1:
-    st.metric("Current AQI", current["aqi"])
+if alerts["active_alerts"]:
+    names = ", ".join(a["when"] for a in alerts["active_alerts"])
+    st.error(f"**Hazard alert** — unhealthy or worse AQI expected: {names}. See the Alerts tab for details.", icon="⚠️")
+else:
+    st.success("No hazardous AQI currently forecast in the next 3 days.", icon="✅")
+
+# ================= CURRENT CONDITIONS =================
+col_gauge, col_detail = st.columns([1, 1.4], gap="large")
+
+with col_gauge:
+    st.plotly_chart(aqi_gauge(current["aqi"], current["category"]), use_container_width=True)
     st.markdown(
-        f"<span style='color:{color_for(current['category'])}; font-weight:600'>"
-        f"{current['category']}</span>",
+        f"<div style='text-align:center; margin-top:-14px'>{category_pill(current['category'])}</div>",
         unsafe_allow_html=True,
     )
-with col2:
+
+with col_detail:
+    st.markdown("#### Current conditions")
     st.write(current["advice"])
+    m1, m2 = st.columns(2)
+    m1.metric("Category", current["category"])
+    m2.metric("Alert threshold", f"{alerts['threshold_aqi']} AQI")
 
 st.divider()
 
-# ---------- forecast cards ----------
-st.subheader("Next 3 days")
-st.caption(predictions["caveat"])
+# ================= TABS (progressive disclosure) =================
+tab_forecast, tab_trend, tab_explain, tab_alerts = st.tabs(
+    ["📅 3-Day Forecast", "📈 Trend", "🔍 Why this prediction", "🚨 Alerts"]
+)
 
-cols = st.columns(3)
-for col, (horizon_key, f) in zip(cols, forecast.items()):
-    with col:
-        st.markdown(f"**{horizon_key} ahead**")
+with tab_forecast:
+    st.caption(predictions["caveat"])
+    cols = st.columns(3)
+    for col, (horizon_key, f) in zip(cols, forecast.items()):
+        with col:
+            st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+            st.markdown(f"**{horizon_key} ahead**")
+            st.markdown(
+                f"<div style='font-family:Fraunces,serif; font-size:2.4rem; font-weight:600; "
+                f"color:{category_color(f['category'])}'>{f['predicted_aqi']}</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(category_pill(f["category"]), unsafe_allow_html=True)
+            st.caption(f["advice"])
+            st.markdown("</div>", unsafe_allow_html=True)
+
+with tab_trend:
+    st.caption(
+        "Current reading plus the three forecast points. A full historical "
+        "trend needs a dedicated /history endpoint reading more than the "
+        "latest row from the feature store — not wired up yet."
+    )
+    points = [current["aqi"]] + [f["predicted_aqi"] for f in forecast.values()]
+    labels = ["Now"] + list(forecast.keys())
+    point_colors = [category_color(current["category"])] + [category_color(f["category"]) for f in forecast.values()]
+    fig = go.Figure(go.Scatter(
+        x=labels, y=points, mode="lines+markers",
+        line=dict(color=INK, width=2),
+        marker=dict(size=10, color=point_colors),
+    ))
+    fig.update_layout(
+        height=320, margin=dict(l=10, r=10, t=10, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        yaxis=dict(title="AQI", gridcolor=LINE), xaxis=dict(title=None),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+with tab_explain:
+    st.caption(
+        "SHAP values show how much each feature's current value pushed the "
+        "prediction up or down from the model's baseline expectation."
+    )
+    horizon_label = st.radio("Explain which forecast?", ["24h", "48h", "72h"], horizontal=True)
+    horizon_hours = int(horizon_label.replace("h", ""))
+
+    try:
+        with st.spinner("Computing feature contributions..."):
+            explanation = fetch(f"/explain/{horizon_hours}")
+        contrib_df = pd.DataFrame(explanation["top_contributions"])
+
         st.markdown(
-            f"<div style='font-size:2.2rem; font-weight:700; color:{color_for(f['category'])}'>"
-            f"{f['predicted_aqi']}</div>",
+            f"<div class='caveat-box'>Base rate: <b>{explanation['base_value']} AQI</b> → "
+            f"adjusted to <b>{explanation['predicted_aqi']} AQI</b> after all feature effects. "
+            f"Bars below show the largest individual contributors.</div>",
             unsafe_allow_html=True,
         )
-        st.caption(f["category"])
-        if f["alert"]:
-            st.warning("Hazardous")
+        st.plotly_chart(contribution_chart(contrib_df, horizon_label), use_container_width=True)
 
-st.divider()
+        with st.expander("Raw feature values"):
+            st.dataframe(
+                contrib_df[["feature", "value", "shap_contribution"]],
+                hide_index=True, use_container_width=True,
+            )
+    except requests.exceptions.RequestException as e:
+        st.warning(f"Couldn't load explanation: {e}")
 
-# ---------- SHAP explanations ----------
-st.subheader("Why the model predicted this")
-explain_horizon = st.selectbox(
-    "Explain which forecast?", options=["24h", "48h", "72h"], index=0
-)
-horizon_hours = int(explain_horizon.replace("h", ""))
-
-try:
-    explanation = fetch(f"/explain/{horizon_hours}")
-    contrib_df = pd.DataFrame(explanation["top_contributions"])
-    contrib_df = contrib_df.sort_values("shap_contribution")
-
-    st.caption(
-        f"Base rate: {explanation['base_value']} AQI. Each bar shows how much that "
-        f"feature's current value pushed the {explain_horizon} prediction up or down "
-        f"from the base rate, to arrive at {explanation['predicted_aqi']}."
-    )
-    st.bar_chart(contrib_df.set_index("feature")["shap_contribution"])
-
-    with st.expander("Raw feature values behind this explanation"):
-        st.dataframe(contrib_df[["feature", "value", "shap_contribution"]], hide_index=True)
-
-except requests.exceptions.RequestException as e:
-    st.warning(f"Couldn't load explanation: {e}")
+with tab_alerts:
+    if not alerts["active_alerts"]:
+        st.success("Nothing to show — all readings and forecasts are below the alert threshold.")
+    else:
+        for a in alerts["active_alerts"]:
+            st.markdown(
+                f"<div class='metric-card' style='border-left:4px solid {category_color(a['category'])}; margin-bottom:10px'>"
+                f"<b>{a['when'].upper()}</b> — AQI {a['aqi']} {category_pill(a['category'])}"
+                f"<div style='margin-top:6px; color:{INK_SOFT}'>{a['advice']}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+    st.caption(f"Alert threshold: AQI ≥ {alerts['threshold_aqi']} (Unhealthy for Sensitive Groups or worse).")
 
 st.divider()
 st.caption(
     "Independent forecasting project, not an official air-quality authority. "
-    "Data: AQICN, OpenWeather, Open-Meteo."
+    "For health guidance during severe smog, refer to Pakistan's Ministry of "
+    "Climate Change or your local health department."
 )
+
+if auto_refresh:
+    time.sleep(60)
+    st.cache_data.clear()
+    st.rerun()
