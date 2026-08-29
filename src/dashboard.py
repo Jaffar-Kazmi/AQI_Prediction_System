@@ -96,6 +96,17 @@ st.markdown(f"""
         background:{PAPER}; border:1px solid {LINE}; border-radius:12px;
         padding:20px 22px; font-size:1.05rem;
     }}
+    .fc-label {{
+        font-family:'IBM Plex Mono', monospace; font-size:0.85rem;
+        letter-spacing:0.04em; color:{INK_SOFT}; margin-bottom:10px;
+    }}
+    .fc-number {{
+        font-family:'Fraunces', serif; font-size:2.4rem; font-weight:600;
+        line-height:1.1; margin-bottom:8px;
+    }}
+    .fc-advice {{
+        font-size:0.92rem; color:{INK_SOFT}; margin-top:10px; line-height:1.4;
+    }}
     .cat-pill {{
         display:inline-block; padding:5px 14px; border-radius:999px;
         font-size:0.95rem; font-weight:600;
@@ -107,8 +118,43 @@ st.markdown(f"""
     }}
     div[data-testid="stMetricValue"] {{ font-family:'Fraunces', serif; font-size:1.9rem; }}
     div[data-testid="stMetricLabel"] {{ font-size:0.95rem; }}
-    .stTabs [data-baseweb="tab"] {{ font-size:1.05rem; padding:10px 6px; }}
     [data-testid="stCaptionContainer"] {{ font-size:0.95rem; }}
+
+    /* Tabs restyled as a pill button group instead of underlined text tabs */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap:8px; border-bottom:none; background:{MIST};
+        padding:6px; border-radius:12px; display:inline-flex;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        font-size:1.02rem; font-weight:500; padding:10px 20px;
+        border-radius:9px; background:transparent; color:{INK_SOFT};
+        border:none; transition:background .15s ease, color .15s ease;
+    }}
+    .stTabs [data-baseweb="tab"]:hover {{
+        background:{LINE}55; color:{INK};
+    }}
+    .stTabs [aria-selected="true"] {{
+        background:{PAPER} !important; color:{INK} !important;
+        font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,0.08);
+    }}
+    .stTabs [data-baseweb="tab-highlight"] {{ display:none; }}
+    .stTabs [data-baseweb="tab-border"] {{ display:none; }}
+
+    /* The default sidebar collapse/expand arrow is small and low-contrast
+       by default - this makes it larger and more visible so users notice
+       the sidebar is there and interactive. */
+    [data-testid="stSidebarCollapseButton"] button,
+    [data-testid="collapsedControl"] button {{
+        opacity:1 !important; transform:scale(1.3);
+    }}
+
+    .legend-row {{
+        display:flex; align-items:center; gap:8px; font-size:0.85rem;
+        margin-bottom:6px; color:{INK};
+    }}
+    .legend-dot {{
+        width:10px; height:10px; border-radius:50%; flex-shrink:0;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -127,6 +173,25 @@ def category_pill(category: str) -> str:
     legible and just as distinguishable between categories."""
     return (f"<span class='cat-pill' style='background:{category_color(category)}22; "
             f"color:{category_color_deep(category)}'>{category}</span>")
+
+
+# A small custom icon (three fading arcs = the "haze layer" motif used
+# throughout the site) so the sidebar has a clear, deliberate visual
+# anchor - the default Streamlit sidebar-collapse arrow is small and
+# low-contrast, and users frequently miss that the sidebar is there at all.
+_SIDEBAR_ICON = (
+    "data:image/svg+xml,"
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+    "<rect width='64' height='64' rx='14' fill='%23EFF1EA'/>"
+    "<path d='M14 24c6-6 14-6 20 0s14 6 20 0' stroke='%232A312D' "
+    "stroke-width='4' fill='none' stroke-linecap='round'/>"
+    "<path d='M14 34c6-6 14-6 20 0s14 6 20 0' stroke='%232A312D' "
+    "stroke-width='4' fill='none' stroke-linecap='round' opacity='0.6'/>"
+    "<path d='M14 44c6-6 14-6 20 0s14 6 20 0' stroke='%232A312D' "
+    "stroke-width='4' fill='none' stroke-linecap='round' opacity='0.3'/>"
+    "</svg>"
+)
+st.logo(_SIDEBAR_ICON, icon_image=_SIDEBAR_ICON)
 
 
 @st.cache_data(ttl=55)
@@ -213,6 +278,15 @@ with st.sidebar:
     st.caption("Leave off while exploring explanations — refreshing resets your selection.")
 
     st.markdown("---")
+    st.markdown("### AQI scale")
+    st.caption("Shown here so you never have to remember what a color means.")
+    legend_rows = "".join(
+        f"<div class='legend-row'><span class='legend-dot' style='background:{color}'></span>{name}</div>"
+        for name, color in CATEGORY_COLORS.items()
+    )
+    st.markdown(legend_rows, unsafe_allow_html=True)
+
+    st.markdown("---")
     st.markdown("### About this project")
     st.caption(
         "Independent forecasting pipeline for Islamabad: hourly ingestion, "
@@ -251,6 +325,21 @@ st.markdown(
 # ================= HEADER =================
 st.title("Islamabad AQI Forecast")
 
+with st.expander("How to read this dashboard"):
+    st.markdown(
+        "- **The dial** shows the current AQI reading and where it falls on the 0–300 severity scale.\n"
+        "- **3-Day Forecast** gives one prediction per day, each from a model trained "
+        "specifically for that distance ahead — a 3-day forecast is a harder problem "
+        "than a 1-day one, so treat later days as less certain.\n"
+        "- **Trend** plots the current reading alongside the three forecast points.\n"
+        "- **Why this prediction** shows which factors pushed a given forecast up or "
+        "down, using SHAP — useful for sanity-checking the model, not just trusting it blindly.\n"
+        "- **Alerts** lists any current or forecast reading at or above the hazard "
+        "threshold, shown in the sidebar's AQI scale.\n\n"
+        "Forecasts beyond 'now' assume today's weather holds steady, since no live "
+        "weather forecast is connected yet — treat 48h/72h numbers as directional."
+    )
+
 if alerts["active_alerts"]:
     names = ", ".join(a["when"] for a in alerts["active_alerts"])
     st.error(f"**Hazard alert** — unhealthy or worse AQI expected: {names}. See the Alerts tab for details.")
@@ -286,16 +375,15 @@ with tab_forecast:
     cols = st.columns(3)
     for col, (horizon_key, f) in zip(cols, forecast.items()):
         with col:
-            st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-            st.markdown(f"**{horizon_key} ahead**")
             st.markdown(
-                f"<div style='font-family:Fraunces,serif; font-size:2.4rem; font-weight:600; "
-                f"color:{category_color_deep(f['category'])}'>{f['predicted_aqi']}</div>",
+                f"<div class='metric-card'>"
+                f"<div class='fc-label'>{horizon_key} AHEAD</div>"
+                f"<div class='fc-number' style='color:{category_color_deep(f['category'])}'>{f['predicted_aqi']}</div>"
+                f"{category_pill(f['category'])}"
+                f"<div class='fc-advice'>{f['advice']}</div>"
+                f"</div>",
                 unsafe_allow_html=True,
             )
-            st.markdown(category_pill(f["category"]), unsafe_allow_html=True)
-            st.caption(f["advice"])
-            st.markdown("</div>", unsafe_allow_html=True)
 
 with tab_trend:
     st.caption(
@@ -345,7 +433,15 @@ with tab_explain:
                 hide_index=True, use_container_width=True,
             )
     except requests.exceptions.HTTPError as e:
-        detail = e.response.json().get("detail", str(e)) if e.response is not None else str(e)
+        try:
+            detail = e.response.json().get("detail", str(e)) if e.response is not None else str(e)
+        except (ValueError, AttributeError):
+            # Response wasn't valid JSON at all - usually means the server
+            # crashed outright rather than returning a clean error response.
+            detail = (
+                f"{e} (server sent no readable error body — check the "
+                f"uvicorn terminal for a traceback)"
+            )
         st.warning(f"Couldn't load explanation: {detail}")
     except requests.exceptions.RequestException as e:
         st.warning(f"Couldn't load explanation: {e}")
