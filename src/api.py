@@ -69,6 +69,12 @@ def get_explanation(horizon_hours: int, top_n: int = 8):
         return predict.explain_horizon(horizon_hours, top_n=top_n)
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        # Broad catch is intentional here: SHAP/XGBoost version mismatches
+        # can raise error types we haven't seen before, and a vague 500
+        # with no message is much harder to debug than a labeled 500 with
+        # the actual exception text.
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 
 @app.get("/alerts")

@@ -344,6 +344,9 @@ with tab_explain:
                 contrib_df[["feature", "value", "shap_contribution"]],
                 hide_index=True, use_container_width=True,
             )
+    except requests.exceptions.HTTPError as e:
+        detail = e.response.json().get("detail", str(e)) if e.response is not None else str(e)
+        st.warning(f"Couldn't load explanation: {detail}")
     except requests.exceptions.RequestException as e:
         st.warning(f"Couldn't load explanation: {e}")
 

@@ -154,12 +154,21 @@ def explain_horizon(horizon_hours: int, top_n: int = 8) -> dict:
 
     X = pd.DataFrame([latest_row[feature_cols].values], columns=feature_cols)
 
-    explainer = shap.TreeExplainer(model)
+    # feature_perturbation="tree_path_dependent" avoids a common
+    # incompatibility where SHAP's default "interventional" mode raises on
+    # some XGBoost versions unless a background dataset is supplied.
+    # Path-dependent perturbation doesn't need one and is the standard
+    # choice for tree ensembles like this anyway.
+    explainer = shap.TreeExplainer(model, feature_perturbation="tree_path_dependent")
     shap_values = explainer.shap_values(X)[0]
     base_value = float(explainer.expected_value)
 
     all_contributions = [
-        {"feature": col, "value": float(X[col].iloc[0]), "shap_contribution": float(sv)}
+        {
+            "feature": col,
+            "value": None if pd.isna(X[col].iloc[0]) else float(X[col].iloc[0]),
+            "shap_contribution": float(sv),
+        }
         for col, sv in zip(feature_cols, shap_values)
     ]
     # Reconstructing the prediction from base_value + every contribution
