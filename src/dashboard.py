@@ -135,7 +135,8 @@ st.markdown(f"""
     }}
     .stTabs [aria-selected="true"] {{
         background:{PAPER} !important; color:{INK} !important;
-        font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,0.08);
+        font-weight:600; border:2px solid {INK} !important;
+        padding:8px 18px !important;
     }}
     .stTabs [data-baseweb="tab-highlight"] {{ display:none; }}
     .stTabs [data-baseweb="tab-border"] {{ display:none; }}
@@ -311,6 +312,17 @@ except requests.exceptions.RequestException as e:
 
 current = predictions["current"]
 forecast = predictions["forecast"]
+
+# The active tab's border reflects the worst (most severe) of the three
+# forecasted days - a single color can't represent three different days,
+# so the most severe one is the most useful thing to flag at a glance,
+# consistent with how the alert system already prioritizes risk.
+worst_forecast = max(forecast.values(), key=lambda f: f["predicted_aqi"])
+tab_border_color = category_color_deep(worst_forecast["category"])
+st.markdown(
+    f"<style>.stTabs [aria-selected='true'] {{ border-color:{tab_border_color} !important; }}</style>",
+    unsafe_allow_html=True,
+)
 
 # ================= STATUS BAR (visibility of system status) =================
 st.markdown(
