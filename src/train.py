@@ -31,6 +31,7 @@ from torch import nn
 from xgboost import XGBRegressor
 
 import feature_store as fs
+from feature_engineering import LAG_WINDOWS_HOURS, FUTURE_WEATHER_COLS, add_lag_features
 
 # One model trained per horizon: tomorrow, day-after-tomorrow, 3 days out.
 FORECAST_HORIZONS_HOURS = [24, 48, 72]
@@ -39,32 +40,7 @@ FORECAST_HORIZONS_HOURS = [24, 48, 72]
 # horizon inside main() since the target column name changes per horizon.
 BASE_NON_FEATURE_COLUMNS = ["timestamp_utc", "station_id"]
 
-FUTURE_WEATHER_COLS = ["temperature_c", "humidity_pct", "pressure_hpa", "wind_speed", "rain"]
-
-LAG_WINDOWS_HOURS = [24, 48, 72]
-
 MODEL_REGISTRY_DIR = "model_registry"
-
-
-def add_lag_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add rolling-window and lag features so the model sees recent trend,
-    not just a single frozen snapshot. All windows/lags look BACKWARD only
-    (rolling(window).mean(), shift(N) with positive N) - never forward,
-    which would leak the future into a feature. These are horizon-independent,
-    so they're computed once and reused for every horizon."""
-    df = df.sort_values("timestamp_utc").reset_index(drop=True)
-
-    for window in LAG_WINDOWS_HOURS:
-        df[f"aqi_roll_mean_{window}h"] = df["aqi"].rolling(window, min_periods=1).mean()
-        df[f"aqi_roll_max_{window}h"] = df["aqi"].rolling(window, min_periods=1).max()
-        df[f"aqi_roll_min_{window}h"] = df["aqi"].rolling(window, min_periods=1).min()
-        df[f"pm25_roll_mean_{window}h"] = df["pm25"].rolling(window, min_periods=1).mean()
-
-    # Same hour, previous day / 2 days ago - captures daily cycle directly
-    df["aqi_lag_24h"] = df["aqi"].shift(24)
-    df["aqi_lag_48h"] = df["aqi"].shift(48)
-
-    return df
 
 
 def add_future_weather_features(df: pd.DataFrame, horizon_hours: int) -> pd.DataFrame:
@@ -264,7 +240,7 @@ def run_for_horizon(df_with_lags: pd.DataFrame, horizon_hours: int) -> list:
     # at this horizon with the signal available. If they DO beat it
     # substantially, that's the real evidence the models are learning
     # something, even if the raw R2 number looks modest in isolation.
-    print("\nNaive persistence baseline (predict current AQI unchanged)...")
+    print(f"\nNaive persistence baseline (predict current AQI unchanged)...")
     persistence_preds = test_df["aqi"].values
     results.append(evaluate(y_test, persistence_preds, "Persistence", horizon_hours))
 

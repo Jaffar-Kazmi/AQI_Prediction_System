@@ -19,13 +19,16 @@ hidden.
 import os
 
 import joblib
+import numpy as np
 import pandas as pd
 import shap
 
 import feature_store as fs
-from train import (
+from feature_engineering import (
+    LAG_WINDOWS_HOURS,
     FUTURE_WEATHER_COLS,
     add_lag_features,
+    add_time_features,
 )
 
 MODEL_REGISTRY_DIR = "model_registry"

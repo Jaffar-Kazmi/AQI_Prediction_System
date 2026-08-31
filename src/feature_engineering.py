@@ -3,7 +3,15 @@ feature_engineering.py
 Turns raw fetch_data.py rows into model-ready features:
 - time-based features (hour, day, month, day-of-week)
 - AQI change rate (requires at least one prior reading)
-- basic cleanup (rain None -> 0, drop unreliable dew_point)
+- lag/rolling-window features (shared by training and serving)
+- basic cleanup (rain None -> 0)
+- final schema enforcement (drops any field not in the canonical whitelist)
+
+Lag/rolling feature logic lives HERE rather than in train.py specifically so
+that predict.py - which only needs to SERVE predictions - can reuse it
+without importing train.py's heavy training-only dependencies (torch,
+sklearn, the XGBoost training path). Anything both training and serving
+need lives here; training-only code stays in train.py.
 """
 
 from datetime import datetime
@@ -32,6 +40,12 @@ BACKFILL_COLUMN_MAP = {
     "precipitation": "rain",
 }
 
+LAG_WINDOWS_HOURS = [24, 48, 72]
+
+# Weather columns future-forecast features get built from (see train.py's
+# add_future_weather_features and predict.py's persistence-forecast fallback).
+FUTURE_WEATHER_COLS = ["temperature_c", "humidity_pct", "pressure_hpa", "wind_speed", "rain"]
+
 
 def standardize_backfill_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Rename Open-Meteo's backfill columns to match the live pipeline's
@@ -56,10 +70,31 @@ def add_time_features(row: dict) -> dict:
     return row
 
 
+def add_lag_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add rolling-window and lag features so the model sees recent trend,
+    not just a single frozen snapshot. All windows/lags look BACKWARD only
+    (rolling(window).mean(), shift(N) with positive N) - never forward,
+    which would leak the future into a feature."""
+    df = df.sort_values("timestamp_utc").reset_index(drop=True)
+
+    for window in LAG_WINDOWS_HOURS:
+        df[f"aqi_roll_mean_{window}h"] = df["aqi"].rolling(window, min_periods=1).mean()
+        df[f"aqi_roll_max_{window}h"] = df["aqi"].rolling(window, min_periods=1).max()
+        df[f"aqi_roll_min_{window}h"] = df["aqi"].rolling(window, min_periods=1).min()
+        df[f"pm25_roll_mean_{window}h"] = df["pm25"].rolling(window, min_periods=1).mean()
+
+    # Same hour, previous day / 2 days ago - captures daily cycle directly
+    df["aqi_lag_24h"] = df["aqi"].shift(24)
+    df["aqi_lag_48h"] = df["aqi"].shift(48)
+
+    return df
+
+
 def clean_fields(row: dict) -> dict:
     """rain=None means 'no rain reported', not missing data -> treat as 0."""
     row["rain"] = row.get("rain") or 0.0
     return row
+
 
 def add_change_rate(current_row: dict, previous_row: dict | None) -> dict:
     """AQI change rate = (current - previous) / hours_elapsed.
@@ -132,7 +167,20 @@ def build_features_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_features(current_row: dict, previous_row: dict | None = None) -> dict:
-    row = dict(current_row)
+    """Main entry point: apply all feature engineering steps to a single row.
+
+    current_row: the latest row from fetch_data.fetch_current_reading()
+    previous_row: the most recent PRIOR row from the feature store, if any.
+                   Pass None for the very first row ever collected.
+
+    The final enforce_schema() call is the whitelist gate: it keeps only
+    the canonical columns (dropping dominant_pollutant, station_time_local,
+    ow_* fields, etc.) and raises if a required column is unexpectedly
+    missing. It runs LAST, after hour/day/aqi_change_rate have actually
+    been computed - running it earlier would reject the row for "missing"
+    columns that simply hadn't been added yet.
+    """
+    row = dict(current_row)  # don't mutate the caller's dict
     row = clean_fields(row)
     row = add_time_features(row)
     row = add_change_rate(row, previous_row)
