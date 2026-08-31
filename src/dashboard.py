@@ -32,10 +32,9 @@ from datetime import datetime
 
 import pandas as pd
 import plotly.graph_objects as go
-import requests
 import streamlit as st
 
-API_BASE = "http://localhost:8000"
+import predict
 
 CATEGORY_COLORS = {
     "Good": "#6A9C81",
@@ -196,19 +195,27 @@ st.logo(_SIDEBAR_ICON, icon_image=_SIDEBAR_ICON)
 
 
 @st.cache_data(ttl=55)
-def fetch(endpoint: str):
-    resp = requests.get(f"{API_BASE}{endpoint}", timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+def load_predictions():
+    predictions = predict.predict_all()
+    alerts = predict.build_alerts(predictions)
+    return predictions, alerts
 
 
-def api_error_screen(err: Exception):
+@st.cache_data(ttl=55)
+def load_explanation(horizon_hours: int, top_n: int = 8):
+    return predict.explain_horizon(horizon_hours, top_n=top_n)
+
+
+def missing_data_screen(err: Exception):
     st.error(
-        "**Can't reach the prediction API.**\n\n"
-        "This dashboard reads live predictions from a separate service that "
-        "isn't running yet. Start it in another terminal, from the project root:\n\n"
-        "```\nuvicorn api:app --reload --port 8000 --app-dir src\n```\n\n"
-        "Then click **Retry** below."
+        "**Can't load predictions.**\n\n"
+        "This usually means the feature store or trained models aren't "
+        "present yet. Locally, run the pipeline first:\n\n"
+        "```\npython src/hourly_pipeline.py\npython src/train.py\n```\n\n"
+        "On a fresh deployment, check that `feature_store/` and "
+        "`model_registry/` were committed to the repo and that the "
+        "hourly-ingest / daily-retrain GitHub Actions have run at least "
+        "once. Then click **Retry** below."
     )
     with st.expander("Technical details"):
         st.code(str(err))
@@ -305,10 +312,9 @@ with st.sidebar:
 
 # ================= LOAD DATA =================
 try:
-    predictions = fetch("/predict")
-    alerts = fetch("/alerts")
-except requests.exceptions.RequestException as e:
-    api_error_screen(e)
+    predictions, alerts = load_predictions()
+except (FileNotFoundError, ValueError) as e:
+    missing_data_screen(e)
 
 current = predictions["current"]
 forecast = predictions["forecast"]
@@ -428,7 +434,7 @@ with tab_explain:
 
     try:
         with st.spinner("Computing feature contributions..."):
-            explanation = fetch(f"/explain/{horizon_hours}")
+            explanation = load_explanation(horizon_hours)
         contrib_df = pd.DataFrame(explanation["top_contributions"])
 
         st.markdown(
@@ -444,18 +450,7 @@ with tab_explain:
                 contrib_df[["feature", "value", "shap_contribution"]],
                 hide_index=True, use_container_width=True,
             )
-    except requests.exceptions.HTTPError as e:
-        try:
-            detail = e.response.json().get("detail", str(e)) if e.response is not None else str(e)
-        except (ValueError, AttributeError):
-            # Response wasn't valid JSON at all - usually means the server
-            # crashed outright rather than returning a clean error response.
-            detail = (
-                f"{e} (server sent no readable error body — check the "
-                f"uvicorn terminal for a traceback)"
-            )
-        st.warning(f"Couldn't load explanation: {detail}")
-    except requests.exceptions.RequestException as e:
+    except (FileNotFoundError, ValueError) as e:
         st.warning(f"Couldn't load explanation: {e}")
 
 with tab_alerts:

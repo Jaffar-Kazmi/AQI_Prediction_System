@@ -87,21 +87,4 @@ def get_alerts():
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(status_code=503, detail=str(e))
 
-    alerts = []
-    if data["current"]["alert"]:
-        alerts.append({
-            "when": "now",
-            "aqi": data["current"]["aqi"],
-            "category": data["current"]["category"],
-            "advice": data["current"]["advice"],
-        })
-    for horizon_key, forecast in data["forecast"].items():
-        if forecast["alert"]:
-            alerts.append({
-                "when": horizon_key,
-                "aqi": forecast["predicted_aqi"],
-                "category": forecast["category"],
-                "advice": forecast["advice"],
-            })
-
-    return {"threshold_aqi": predict.ALERT_THRESHOLD_AQI, "active_alerts": alerts}
+    return predict.build_alerts(data)

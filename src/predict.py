@@ -189,6 +189,31 @@ def explain_horizon(horizon_hours: int, top_n: int = 8) -> dict:
     }
 
 
+def build_alerts(predictions: dict) -> dict:
+    """Extract any current or forecast reading at/above the hazard
+    threshold from a predict_all() result. Shared by api.py (if you run it
+    standalone) and dashboard.py (if it imports predict.py directly) so
+    the two never drift out of sync with each other."""
+    alerts = []
+    current = predictions["current"]
+    if current["alert"]:
+        alerts.append({
+            "when": "now",
+            "aqi": current["aqi"],
+            "category": current["category"],
+            "advice": current["advice"],
+        })
+    for horizon_key, f in predictions["forecast"].items():
+        if f["alert"]:
+            alerts.append({
+                "when": horizon_key,
+                "aqi": f["predicted_aqi"],
+                "category": f["category"],
+                "advice": f["advice"],
+            })
+    return {"threshold_aqi": ALERT_THRESHOLD_AQI, "active_alerts": alerts}
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps(predict_all(), indent=2, default=str))
